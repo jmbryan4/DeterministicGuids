@@ -16,11 +16,13 @@ is the natural follow-up where results diverge.
 
 **Partially correct — the claim is algorithm-dependent, not general.**
 
+Averaged over three full runs of the protocol (see "Three-run averages" below):
+
 | Algorithm | One-shot vs reused ThreadLocal hasher | Matches the 15–16 % degradation claim? |
 |-----------|----------------------------------------|----------------------------------------|
-| MD5 (v3) | **28–35 % faster** | No — opposite direction |
-| SHA-1 (v5, the library default) | **33–40 % faster** | No — opposite direction |
-| SHA-256 (v8) | **2.0–2.5× slower** | Direction yes, magnitude far larger |
+| MD5 (v3) | **~30 % faster** (ratio 0.69–0.71) | No — opposite direction |
+| SHA-1 (v5, the library default) | **~34–37 % faster** (ratio 0.63–0.66) | No — opposite direction |
+| SHA-256 (v8) | **2.1–2.4× slower** | Direction yes, magnitude far larger |
 
 - For the library's **default path (v5/SHA-1)** and for v3/MD5, PR #18's change is a clear
   *win* on this platform: rejecting it on performance grounds does not reproduce here.
@@ -40,6 +42,45 @@ is the natural follow-up where results diverge.
 Practical implication (if pursuing this upstream): a per-algorithm hybrid — one-shot for
 MD5/SHA-1, reused hasher for SHA-256 — would win on this platform, but the split may flip on
 Windows CNG, so any change should be gated on per-platform, per-algorithm measurements.
+
+## Three-run averages
+
+The full protocol (Benchmark A, Benchmark B, Stopwatch harness) was executed three times.
+Run 1 and run 3 ran on a quiet machine (default BDN job); run 2 used `--job Medium` for
+Benchmark A and ran with more background load (visibly higher StdDev/RatioSD), but every
+ratio kept the same direction and similar magnitude in all three runs.
+
+### Benchmark A — isolated hash call, mean of 3 runs
+
+| Algorithm | ThreadLocal (ns) | OneShot (ns) | Mean ratio (per-run: R1 / R2 / R3) |
+|---|---:|---:|---|
+| MD5 | 264.6 | 183.0 | **0.70** (0.72 / 0.67 / 0.70) |
+| SHA-1 | 245.9 | 162.4 | **0.66** (0.67 / 0.70 / 0.62) |
+| SHA-256 | 71.0 | 163.0 | **2.36** (2.53 / 2.08 / 2.48) |
+
+### Benchmark B — full `Create` path, mean OneShot/ThreadLocal ratio of 3 runs
+
+| Algorithm | NameLength | Mean ratio (per-run: R1 / R2 / R3) | Library/ThreadLocal mean |
+|---|---|---|---:|
+| MD5 | Short | **0.71** (0.65 / 0.74 / 0.74) | 0.96 |
+| MD5 | Long | **0.91** (0.91 / 0.90 / 0.91) | 0.98 |
+| SHA-1 | Short | **0.59** (0.60 / 0.54 / 0.63) | 0.96 |
+| SHA-1 | Long | **0.77** (0.77 / 0.78 / 0.75) | 1.00 |
+| SHA-256 | Short | **2.07** (2.15 / 1.90 / 2.16) | 0.96 |
+| SHA-256 | Long | **1.15** (1.29 / 1.06 / 1.10) | 1.03 |
+
+### Stopwatch harness — mean OneShot/ThreadLocal ratio across all 12 passes (3 runs × 4 passes)
+
+| Algorithm | Mean ratio | Range across passes |
+|---|---:|---|
+| MD5 | **0.69** | 0.67–0.71 |
+| SHA-1 | **0.63** | 0.61–0.65 |
+| SHA-256 | **2.08** | 2.00–2.19 |
+
+All three instruments agree across all three runs: one-shot wins by ~30 % (MD5) and
+~34–37 % (SHA-1), and loses by ~2.1–2.4× (SHA-256) on the isolated call. The
+`Create_Library`/`Create_ThreadLocal` anchor stayed at 0.96–1.03 in every run. The
+single-run tables below are from run 1 and are representative.
 
 ## Environment
 
