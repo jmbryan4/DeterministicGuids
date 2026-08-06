@@ -33,7 +33,8 @@
 
 	<PropertyGroup Condition="$(DefineConstants.Contains(AOT_COMPATIBLE))">
 		<IsAotCompatible>true</IsAotCompatible>
-		<PublishAot>true</PublishAot>
+		<!-- Local-only (perf/verify-issue-17-net10): native AOT toolchain for net7.0 is unavailable on osx-arm64 -->
+		<PublishAot Condition="'$(OS)' == 'Windows_NT'">true</PublishAot>
 	</PropertyGroup>
 
 	<PropertyGroup Condition="$(DefineConstants.Contains(TRIMMING_COMPATIBLE))">
