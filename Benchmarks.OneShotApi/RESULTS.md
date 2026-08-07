@@ -32,12 +32,14 @@ Averaged over three full runs of the protocol (see "Three-run averages" below):
   This looks like a macOS backend asymmetry (the instance path for SHA-2 appears to hit a
   much cheaper native path than the one-shot shim; MD5/SHA-1 show the reverse). Hypothesis,
   not root-caused.
-- A flat 15–16 % degradation across algorithms did **not** reproduce. If Mark's Windows
-  numbers averaged across algorithms, a large SHA-256 regression could easily read as an
-  overall ~15 % loss — but per-algorithm data is needed to say that.
-- **No ordering bias found**: an independent plain-`Stopwatch` harness run in both orders
-  (ThreadLocal→OneShot and OneShot→ThreadLocal) reproduced the BenchmarkDotNet ratios within
-  a few percent in every pass.
+- A flat 15–16 % degradation across algorithms did **not reproduce on this platform**. If the
+  upstream Windows numbers averaged across algorithms, a large SHA-256 regression could
+  plausibly read as an overall ~15 % loss — but that is an untested hypothesis about data not
+  broken down per algorithm, not an explanation of it.
+- **On ordering bias:** every BenchmarkDotNet case here ran in its own isolated process under
+  the default job, so no case can prime or pollute another. That addresses the hypothesis for
+  these runs; it says nothing about whether ordering affected the original upstream runs,
+  which used a different harness on a different platform.
 
 Practical implication (if pursuing this upstream): a per-algorithm hybrid — one-shot for
 MD5/SHA-1, reused hasher for SHA-256 — would win on this platform, but the split may flip on
@@ -45,7 +47,7 @@ Windows CNG, so any change should be gated on per-platform, per-algorithm measur
 
 ## Three-run averages
 
-The full protocol (Benchmark A, Benchmark B, Stopwatch harness) was executed three times.
+The full protocol (Benchmark A and Benchmark B) was executed three times.
 Run 1 and run 3 ran on a quiet machine (default BDN job); run 2 used `--job Medium` for
 Benchmark A and ran with more background load (visibly higher StdDev/RatioSD), but every
 ratio kept the same direction and similar magnitude in all three runs.
@@ -69,15 +71,7 @@ ratio kept the same direction and similar magnitude in all three runs.
 | SHA-256 | Short | **2.07** (2.15 / 1.90 / 2.16) | 0.96 |
 | SHA-256 | Long | **1.15** (1.29 / 1.06 / 1.10) | 1.03 |
 
-### Stopwatch harness — mean OneShot/ThreadLocal ratio across all 12 passes (3 runs × 4 passes)
-
-| Algorithm | Mean ratio | Range across passes |
-|---|---:|---|
-| MD5 | **0.69** | 0.67–0.71 |
-| SHA-1 | **0.63** | 0.61–0.65 |
-| SHA-256 | **2.08** | 2.00–2.19 |
-
-All three instruments agree across all three runs: one-shot wins by ~30 % (MD5) and
+Both benchmarks agree across all three runs: one-shot wins by ~30 % (MD5) and
 ~34–37 % (SHA-1), and loses by ~2.1–2.4× (SHA-256) on the isolated call. The
 `Create_Library`/`Create_ThreadLocal` anchor stayed at 0.96–1.03 in every run. The
 single-run tables below are from run 1 and are representative.
@@ -92,9 +86,19 @@ Apple M3 Pro, 1 CPU, 12 logical and 12 physical cores
   DefaultJob : .NET 10.0.10 (10.0.10, 10.0.1026.32716), Arm64 RyuJIT armv8.0-a
 ```
 
-Branch: `perf/verify-issue-17-net10` (local-only; `global.json` bumped to the installed SDK
-10.0.302 and the library's net7.0 `PublishAot` gated to Windows so the solution evaluates on
-osx-arm64 — neither change is intended for merge).
+Branch: `perf/one-shot-hash-benchmarks`. The harness is a standalone project
+(`Benchmarks.OneShotApi`) with its own `Benchmarks.OneShotApi.slnx` and a permissive
+`global.json` (`10.0.100` + `rollForward: latestFeature`), so it builds against any 10.0.x SDK
+without needing the repository's exact pinned SDK. It consumes the published
+`DeterministicGuids` 1.0.11 NuGet package rather than the local project, so it measures the
+released library and does not depend on the repository building.
+
+Reproduce with:
+
+```
+cd Benchmarks.OneShotApi
+dotnet run -c Release --project Benchmarks.OneShotApi.csproj -- --filter '*'
+```
 
 ## Methodology
 
@@ -102,20 +106,18 @@ Rather than benchmarking the stale PR branch against master (different JIT/proce
 conditions), both hashing strategies were placed side-by-side in one project:
 
 1. **Benchmark A — `HashApiBenchmarks`**: isolates exactly the disputed operation. Hash a
-   fixed 26-byte field (16-byte DNS namespace, big-endian, + UTF-8 `"python.org"` — the same
-   input shape as the README benchmarks) via the reused `ThreadLocal<HashAlgorithm>` (with the
-   per-call `.Value` lookup, as the library pays it) vs the static one-shot `HashData`.
-   Baseline = ThreadLocal. First hash byte returned to defeat dead-code elimination.
-2. **Benchmark B — `CreatePathBenchmarks`**: two local copies of the library's
+   fixed 26-byte field (16-byte DNS namespace, big-endian, + UTF-8 `"python.org"`) via the
+   reused `ThreadLocal<HashAlgorithm>` (with the per-call `.Value` lookup, as the library pays
+   it) vs the static one-shot `HashData`. Baseline = ThreadLocal. First hash byte returned to
+   defeat dead-code elimination. A short name is deliberate: it maximises the share of total
+   cost attributable to per-call overhead, which is the thing under dispute, and short names
+   are the common case for this library. Benchmark B's long-name case covers the other end.
+2. **Benchmark B — `CreateBenchmarks`**: two local copies of the library's
    `#if NET8_0_OR_GREATER` `Create` hot path, identical except for the hash call, plus the
    real `DeterministicGuid.Create` as a sanity anchor. Short name (`"python.org"`, stackalloc
    path) and long name (600 chars > 496 bytes, heap-fallback path). `[MemoryDiagnoser]` on.
    A `[GlobalSetup]` guard asserts all three variants produce identical GUIDs for every
    algorithm × name-length combination (it does — the run would have failed otherwise).
-3. **Benchmark C — `StopwatchCheck`**: an independent plain-`Stopwatch` harness
-   (5 M iterations/pass, warmup, 2 repeats, **both orders**) to cross-check BDN and directly
-   test the ordering-bias hypothesis. Run via
-   `dotnet run -c Release --project Benchmarks.Issue17 -- stopwatch`.
 
 All BDN runs used the default job (each benchmark case in its own isolated process).
 
@@ -165,40 +167,18 @@ Observations:
   changes direction. The 640 B allocation (heap buffer for >496-byte inputs) is identical
   across variants.
 
-## Benchmark C — Stopwatch cross-check (ordering bias)
-
-5,000,000 iterations per pass, warmup before measurement, 2 repeats, both orders:
-
-```
-=== MD5 ===
-  [repeat 1] order TL->OS : ThreadLocal  266.72 ns/op | OneShot  184.05 ns/op | OneShot/TL ratio 0.690
-  [repeat 1] order OS->TL : ThreadLocal  264.47 ns/op | OneShot  182.02 ns/op | OneShot/TL ratio 0.688
-  [repeat 2] order TL->OS : ThreadLocal  266.99 ns/op | OneShot  186.89 ns/op | OneShot/TL ratio 0.700
-  [repeat 2] order OS->TL : ThreadLocal  263.23 ns/op | OneShot  181.17 ns/op | OneShot/TL ratio 0.688
-
-=== SHA1 ===
-  [repeat 1] order TL->OS : ThreadLocal  230.54 ns/op | OneShot  143.22 ns/op | OneShot/TL ratio 0.621
-  [repeat 1] order OS->TL : ThreadLocal  224.41 ns/op | OneShot  139.03 ns/op | OneShot/TL ratio 0.620
-  [repeat 2] order TL->OS : ThreadLocal  225.20 ns/op | OneShot  145.47 ns/op | OneShot/TL ratio 0.646
-  [repeat 2] order OS->TL : ThreadLocal  232.31 ns/op | OneShot  147.92 ns/op | OneShot/TL ratio 0.637
-
-=== SHA256 ===
-  [repeat 1] order TL->OS : ThreadLocal   66.20 ns/op | OneShot  142.48 ns/op | OneShot/TL ratio 2.152
-  [repeat 1] order OS->TL : ThreadLocal   66.17 ns/op | OneShot  139.17 ns/op | OneShot/TL ratio 2.103
-  [repeat 2] order TL->OS : ThreadLocal   65.96 ns/op | OneShot  138.73 ns/op | OneShot/TL ratio 2.103
-  [repeat 2] order OS->TL : ThreadLocal   70.19 ns/op | OneShot  140.27 ns/op | OneShot/TL ratio 1.998
-
-(sink: 0)
-```
-
-The ratios agree with BenchmarkDotNet (which isolates every case in its own process) and are
-stable regardless of which variant runs first — the "bias in favour of what gets benchmarked
-first" hypothesis is not supported by this data.
-
 ## Follow-ups
 
-1. **Windows x64 run** (GitHub Actions or a Windows box) of this same project — the SHA-256
-   asymmetry is very likely backend-specific, and that is the environment the original claim
-   was made in.
-2. If the Windows split differs, per-algorithm data per platform is the only sound basis for
-   deciding the upstream API choice (including a possible per-algorithm hybrid).
+1. **Windows x64 run of this same project on bare metal** (not a hosted CI runner — shared
+   VMs are too noisy to trust for anything short of a large delta). The SHA-256 asymmetry is
+   very likely crypto-backend-specific, and Windows/CNG is the environment the original claim
+   was made in. Until that run exists, the results above are a single-platform data point and
+   nothing more.
+2. The Windows numbers may well confirm the original 15–16 % regression, including for SHA-1 —
+   CNG's one-shot versus reused-handle economics are not the same as CommonCrypto's. That
+   outcome is as informative as the alternative and should be recorded either way.
+3. If the split does differ per platform, per-algorithm data per platform is the only sound
+   basis for deciding the upstream API choice. A per-algorithm hybrid is conceivable but would
+   add conditional surface to a core file that is already dense with `#if` directives, which is
+   a real maintenance cost borne by the maintainer — a decision for them, not a foregone
+   conclusion from these numbers.

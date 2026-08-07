@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="RESULTS.md" />
+    <File Path="global.json" />
+    <File Path="../Directory.Build.props" />
+    <File Path="../global.json" />
+    <File Path="../stylecop.json" />
+  </Folder>
+  <Project Path="Benchmarks.OneShotApi.csproj" />
+</Solution>

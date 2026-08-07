@@ -1,23 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
 	<PropertyGroup>
 		<OutputType>Exe</OutputType>
 		<TargetFramework>net10.0</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
-		<SuppressTfmSupportBuildWarnings>true</SuppressTfmSupportBuildWarnings>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 	</PropertyGroup>
 
-	<ItemGroup>
-		<ProjectReference Include="..\DeterministicGuids\DeterministicGuids.csproj" />
-	</ItemGroup>
+	<PropertyGroup>
+		<Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+	</PropertyGroup>
 
 	<ItemGroup>
 	  <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
+	  <PackageReference Include="DeterministicGuids" Version="1.0.11" />
 	</ItemGroup>
-
-	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
-		<Optimize>true</Optimize>
-	</PropertyGroup>
 
 </Project>

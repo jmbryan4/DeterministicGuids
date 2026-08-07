@@ -3,27 +3,21 @@
 
 using System.Security.Cryptography;
 using System.Text;
-
 using BenchmarkDotNet.Attributes;
 
-namespace Benchmarks.Issue17;
+namespace Benchmarks.OneShotApi;
 
 /// <summary>
-/// Benchmark A — isolates the exact operation disputed in issue #17 / PR #18:
-/// hashing a small (26-byte) input via a reused per-thread <see cref="HashAlgorithm"/>
-/// (<c>ThreadLocal.Value.TryComputeHash</c>, current library code) versus the static
-/// one-shot APIs (<c>SHA1.HashData</c> etc., proposed change). Nothing else is measured.
+/// Isolated (<c>ThreadLocal.Value.TryComputeHash</c>) versus the static one-shot APIs (<c>SHA1.HashData</c> etc.).
 /// </summary>
 [MemoryDiagnoser]
 public class HashApiBenchmarks
 {
-    // Mirrors the library's per-thread hasher fields exactly.
-    private static readonly ThreadLocal<HashAlgorithm> Md5Tls = new(MD5.Create);
-    private static readonly ThreadLocal<HashAlgorithm> Sha1Tls = new(SHA1.Create);
-    private static readonly ThreadLocal<HashAlgorithm> Sha256Tls = new(SHA256.Create);
+    private static readonly ThreadLocal<HashAlgorithm> _md5Tls = new(MD5.Create);
+    private static readonly ThreadLocal<HashAlgorithm> _sha1Tls = new(SHA1.Create);
+    private static readonly ThreadLocal<HashAlgorithm> _sha256Tls = new(SHA256.Create);
 
-    // 16-byte DNS namespace (big-endian) + UTF8("python.org") = 26 bytes,
-    // the same input shape the README benchmarks use.
+    // 16-byte DNS namespace (big-endian) + UTF8("python.org") = 26 bytes
     private byte[] _input = null!;
 
     [Params("MD5", "SHA1", "SHA256")]
@@ -32,8 +26,8 @@ public class HashApiBenchmarks
     [GlobalSetup]
     public void Setup()
     {
-        Guid dns = DeterministicGuids.DeterministicGuid.Namespaces.Dns;
-        byte[] name = Encoding.UTF8.GetBytes("python.org");
+        var dns = DeterministicGuids.DeterministicGuid.Namespaces.Dns;
+        byte[] name = [.. "python.org"u8];
         _input = new byte[16 + name.Length];
         dns.TryWriteBytes(_input.AsSpan(0, 16), bigEndian: true, out _);
         name.CopyTo(_input, 16);
@@ -43,11 +37,11 @@ public class HashApiBenchmarks
     public byte ThreadLocal_TryComputeHash()
     {
         Span<byte> hash = stackalloc byte[32];
-        HashAlgorithm hasher = Algorithm switch
+        var hasher = Algorithm switch
         {
-            "MD5" => Md5Tls.Value!,
-            "SHA1" => Sha1Tls.Value!,
-            _ => Sha256Tls.Value!,
+            "MD5" => _md5Tls.Value!,
+            "SHA1" => _sha1Tls.Value!,
+            _ => _sha256Tls.Value!,
         };
         hasher.TryComputeHash(_input, hash, out _);
         return hash[0];
